@@ -1,0 +1,2114 @@
+---
+title: "Data Science Modelling Final Report"
+author: 'STUDENT ID: 11048206'
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+  word_document:
+    toc: true
+  html_document:
+    theme: yeti
+    toc: true
+    toc_float: true
+    df_print: kable
+    encoding: "UTF-8"
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+Word Count = 2236
+
+# **Introduction**
+
+This report presents an exploratory data analysis (EDA) and predictive
+modeling for:
+
+1.  **Medical Insurance Charges Prediction** using multiple regression
+    techniques, LASSO regression, Boosting, Random Forest and Bayesian
+    Additive Regression Trees (BART)
+
+2.  **Stroke Prediction** using Step-wise logistic regression, LASSO,
+    Linear Discriminant Analysis(LDA), Quadratic Discriminant Analysis
+    (QDA) and Random Forest.
+
+# **Install and Load Libraries**
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r setup-installpackages, echo=TRUE}
+# Install packages if not installed (Once)
+if (!require(tidyverse)) install.packages("tidyverse", dependencies=TRUE) # data manipulation
+if (!require(car)) install.packages("car", dependencies=TRUE) # vif(); multicollinearity 
+if (!require(tableone)) install.packages("tableone", dependencies=TRUE) # descriptive statistics
+if (!require(psych)) install.packages("psych", dependencies=TRUE) # descriptive statistics
+if (!require(caret)) install.packages("caret", dependencies=TRUE) # data splitting and model training
+if (!require(dplyr)) install.packages("dplyr", dependencies=TRUE) # data manipulation
+if (!require(GGally)) install.packages("GGally", dependencies=TRUE) # pairwise scatter plot
+if (!require(boot)) install.packages("boot", dependencies=TRUE) # Bootstrapping and cv 
+if (!require(corrplot)) install.packages("corrplot", dependencies=TRUE) # correlation matrix
+if (!require(faraway)) install.packages("faraway", dependencies=TRUE) # for model diagnostics
+if (!require(tidyr)) install.packages("tidyr", dependencies=TRUE) # data manipulation
+if (!require(leaps)) install.packages("leaps", dependencies=TRUE) # variable selection, regsubsets
+if (!require(MASS)) install.packages("MASS", dependencies=TRUE) # lda & qda 
+if (!require(mgcv)) install.packages("mgcv", dependencies=TRUE) # gam()/ nonlinear models
+if (!require(splines)) install.packages("splines", dependencies=TRUE) # splines for nonlinear models
+if (!require(glmnet)) install.packages("glmnet", dependencies=TRUE) # L1 & L2, cv.glmnet() to automate lambda tuning 
+if (!require(tree)) install.packages("tree", dependencies=TRUE) # decision tree
+if (!require(gmodels)) install.packages("gmodels", dependencies=TRUE) # cross tabulation 
+if (!require(randomForest)) install.packages("randomForest", dependencies=TRUE) #rf models
+if (!require(gbm)) install.packages("gbm", dependencies=TRUE) # boosting
+if (!require(BART)) install.packages("BART", dependencies=TRUE) # Bayesian Additive Regression Trees
+if (!require(Matrix)) install.packages("Matrix", dependencies=TRUE) # sparse matrix for Lasso coefficients
+if (!require(mice)) install.packages("mice", dependencies=TRUE) # imputation 
+if (!require(pROC)) install.packages("pROC", dependencies=TRUE)  # For ROC curves
+
+
+# Load libraries 
+library(tidyverse) 
+library(car)
+library(tableone) 
+library(psych)
+library(caret) 
+library(dplyr)
+library(GGally)
+library(boot) 
+library(corrplot) 
+library(faraway)
+library(tidyr)
+library(leaps)
+library(MASS)
+library(mgcv)
+library(splines)
+library(glmnet)
+library(tree)
+library(gmodels)
+library(randomForest) 
+library(gbm)  
+library(BART) 
+library(Matrix) 
+library(mice)
+library(pROC) 
+```
+
+# **Question 1: Medical Insurance Charges Prediction**
+
+## Load the Data
+
+```{r setup-df, echo = TRUE}
+df <- read.csv("/Users/20lau01/Documents/GitHub/Data Science Modelling/Assessment/medical_insurance.csv")
+```
+
+## Exploratory Data Analysis (EDA)
+
+```{r eda, eval = FALSE, echo = TRUE}
+# Understand the data
+dim(df) 
+summary(df) 
+glimpse(df) 
+View(df) 
+sum(is.na(df)) 
+```
+
+```{r factor, echo = TRUE}
+# Factorise categorical variables
+cols <- c("children", "sex", "smoker", "region")  
+df[cols] <- lapply(df[cols], as.factor)
+
+# Make sure charges, age and bmi are numeric 
+df$charges <- as.numeric(df$charges)
+df$age <- as.numeric(df$age)
+df$bmi <- as.numeric(df$bmi)
+```
+
+```{r tableone, echo = FALSE}
+# Descriptive statistics table - Declare vars to summarise
+var <- c("charges", "age", "bmi", "sex", "smoker", "children", "region") 
+
+# All levels of the categorical variables are shown along with their frequencies.
+print(CreateTableOne(data = df[, var]),
+      showAllLevels = TRUE,
+      formatOptions = list(big.mark = ",")) 
+
+# Visualizations for exploratory analysis
+par(mfrow=c(1,3))
+summary(df$charges)
+hist(df$charges) # Right skewed distribution
+hist(df$age, col=2) # Not normally distributed, right skewed; potential non linear relationship
+hist(df$bmi, col=3, breaks=10) # approximately normal, slight right skew
+```
+
+```{r transformedplots_a, echo = TRUE, eval = TRUE}
+# Explore transformation for response variables charges
+par(mfrow=c(1,1))
+symbox(~charges, data=df, col="blue", pch=19) # Log transformation will be done for charges (y)
+hist(log(df$charges)) # charges more normally distributed after log transformation
+
+summary(log(df$charges)) # mean = 9.10, median = 9.15
+
+# Create another data frame for the transformed charges and call it dff
+dff <- df
+dff$log_charges <- log(df$charges)
+dff <- dff[ , !(colnames(dff) %in% "charges")]
+```
+
+```{r transformedplots_b, echo = FALSE}
+# Data distribution using transformed charges 
+par(mfrow=c(2,2))
+boxplot(dff$log_charges ~ dff$sex) # similar, but male -> wider range in log charges
+boxplot(dff$log_charges ~ dff$smoker) # smokers have higher charges; most likely significant and the best predictor 
+boxplot(dff$log_charges ~ dff$children) # differing charges for the different number of children, gives reason for further stat testing
+boxplot(dff$log_charges ~ dff$region) # charges differ between the regions but unclear whether the differences are significant- test 
+```
+
+```{r eda1, echo = FALSE}
+# Reorder the columns so that the dependent variable is first 
+new_order <- c("charges", "age", "bmi", "children", "sex", "smoker", "region")
+df <- df[ ,new_order]
+```
+
+```{r eda1a, echo = TRUE, eval = TRUE}
+numeric_vars <- df %>% dplyr::select(-c(smoker, region, sex, children)) # Define numeric variables
+cor_matrix <- cor(numeric_vars)# Correlation matrix (numeric variables only)
+cor_matrix
+
+# Pairwise relationships 
+GGally::ggpairs(df) 
+GGally::ggpairs(numeric_vars) # numeric variables only
+
+# Examine numeric variable graphics more clearly
+scatterplot(df$bmi, df$charges) # past a bmi 30, the charges increase significantly
+scatterplot(df$age, df$charges) # no abrupt change in charges for age 
+
+```
+
+```{r explor1, echo = TRUE, eval = FALSE}
+# Statistical testing (Significant results)
+# T test for numerical x binary; H0 = the means of the two groups are equal 
+# Assumes normality so dff and log charges will be used 
+t.test(dff$log_charges ~ dff$smoker) # Reject H0
+
+# Chi square test; H0: The variables are independent 
+# smoker x sex 
+with(df, CrossTable(sex, smoker, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS"))) # Reject H0, Statistically significant, association 
+
+# ANOVA  
+# bmi x region
+aov4 <- aov(bmi ~ factor(region), data = dff)
+summary(aov4)
+# significant difference in bmi between the regions
+
+# charges x children 
+aov5 <- aov(log_charges ~ factor(children), data = dff)
+summary(aov5)
+# significant difference in charges between the number of children 
+```
+
+```{r visual1eda, echo = FALSE}
+# Visuals - Group wise comparisons 
+# bmi x region x smoker 
+ggplot(data = dff, aes(x = region, y = bmi, fill = smoker)) +
+  geom_boxplot() +
+  ylab("BMI") +
+  ggtitle("Boxplot of BMI by Region and Smoker") +
+  theme_minimal()
+# Southeast region has the highest BMI for both smokers and non smokers in the data,
+# but the difference for the other regions is not obvious, following from anova result- consider removing it from the model 
+
+# Charges x smoker x region
+ggplot(data = dff, aes(x = region, y = log_charges, fill = smoker)) +
+  geom_boxplot() +
+  ylab("Log Charges") +
+  ggtitle("Boxplot of Log Charges by Region and Smoker") +
+  theme_minimal()
+# of those who are smokers, most are from the southeast region and the least are from northwest
+
+# charges x smoker x children
+ggplot(data = dff, aes(x = children, y = log_charges, fill = smoker)) +
+  geom_boxplot() +
+  ylab("Log Charges") +
+  ggtitle("Boxplot of Log Charges by Children and Smoker") +
+  theme_minimal()
+# of those who are not smokers, most have no children and have wider range of medical charges
+
+# the last 2 ggpplots suggest smoker may be a significant variable as there is a visual difference in log charges between smokers and nonsmokers, region may not be relevant, and although aov5 suggests there is a difference in charges between the number of children, an interaction term between children and other variables such as bmi and age appear unecessary
+```
+
+## **Discussion: Exploratory Data Analysis for Medical Insurance Charges Prediction**
+
+Exploratory analysis of the Medical Insurance data set provides
+important insights into the charges patterns and factors influencing
+them.
+
+#### 1. Data Quality & Structure
+
+The data set is well-structured with no missing values. `Charges`data
+includes individual characteristics like `Age`, `BMI` and `Sex` as well
+as lifestyle indicators such as whether the individual is a `Smoker` or
+not, the geographical `region` of the individual, and the number of
+`Children` they have. These 6 explanatory variables from 1338
+individuals may or may not help predict an individual's medical
+insurance `charges`.
+
+#### 2. Charges Trends & Distribution
+
+-   Outliers in `Charges` suggest some individuals have exceptionally
+    high or low charges, which may be due to specific medical conditions
+    or treatments.
+
+-   `Charges` was **log transformed** to create a more normal
+    distribution, which may improve model performance for **linear
+    models**.
+
+-   In this data set the distribution of `age` is centered around ages
+    39-40 (mean = 39.2, median = 39). 69 individuals of the 1338 are
+    aged 18, making it the highest concentration category.
+
+-   There are **less individuals who are older** and there are **1% more
+    males than females** in the data. 79.5% of individuals are
+    non-smokers. This imbalance may affect feature importance, precision
+    of estimates as well as stability for models.
+
+-   Most people in the data **do not** have any `children`.
+
+-   There are **more people** living in the **southeast region** than
+    any other region, which may affect statistical testing and
+    predictive modeling.
+
+#### 3. Bivariate analysis and statistical testing
+
+Examining relationships between `Charges` and other variables show:
+
+-   `BMI` has a **low positive Pearson correlation** with `Charges` (r =
+    0.13). BMI may not significantly influence medical insurance.
+    However, there are assumption violations and further exploration is
+    required as there could be non-linear relationships.Visual
+    exploration suggest medical charges are higher for some individuals
+    who have a BMI higher than 30.
+-   `Age` showed **moderate positive Pearson correlations** (r = 0.53)
+    with charges, following from scatterplot findings; older individuals
+    in the data have higher medical insurance costs.
+-   One sample T test revealed the mean difference of medical insurance
+    changes between `Smoker` and non-smokers are **significant**, with
+    those who are smokers having a higher average of medical `Charges`.
+-   `Sex` does not appear to have a notable impact on `Charges`; one
+    sample t test showed the mean difference of `Charges` between male
+    and female were **not statistically significant.**
+-   ANOVA highlight a **statistically** **significant association**
+    between the number of `Children` a person has and their medical
+    `Charges`.
+-   `Charges` slightly vary between different `Region`. Grouped box
+    plots indicate that those living in the `Southeast`region tend to
+    have slightly higher `Charges`. ANOVA showed the association between
+    `Region` and `Charges` is **not statistically significant**.
+
+#### 4. Potential Concerns & Improvements
+
+Several aspects of the data require attention before modeling:
+
+-   **Outliers in Charges:** Some individuals have extremely high or low
+    charges. Transforming the data may help reduce their impact, but it
+    can distort the relationship between charges and predictors. The
+    original variable will be used when fitting non-linear models.
+
+-   **Non-Linear Relationships:** Relationship between `Charges` and
+    `BMI` may not be linear as scatterplots suggest. Exploring
+    polynomials and non-linear models like Random Forest may be
+    beneficial.
+
+-   **Multicollinearity among predictors:** `Age` with other predictors
+    should be assessed, as it may affect model performance. Interactions
+    like `smoker:sex` and `bmi:region` could also improve predictive
+    performance, though their relevance requires cautious validation
+    given earlier assumption violations in preliminary hypothesis
+    testing.
+
+#### 5. Conclusion
+
+Medical Insurance `Charges` of individuals are influenced by **personal
+and lifestyle factors**. The data set provides valuable predictors.
+**Improvements** can be made by **addressing outliers** and **exploring
+non-linear relationships** and **interaction terms**. This will help
+build models and render insights that achieve better predictive
+accuracy.
+
+## Regression Models
+
+### Split the data into training and testing sets
+
+```{r data-split, warning=FALSE, echo = TRUE}
+# The validation set approach benefits from computational efficiency, but falls short in terms of wasting the data. 10-fold cross-validation approach is more robust, as it uses all data points for training and testing, but is computationally more expensive. Validation set approach is used for more exploratory purposes. Moreover, for more stable performance estimates of statistical learning methods and for final model selection the 10 fold cross-validation approach is used. 10 fold is utilized as it strikes a practical balance in bias-variance trade-off and is a common choice in practice.
+
+set.seed(123) # set seed for reproducibility 
+trainIndexdff <- createDataPartition(dff$log_charges, p=0.8, list=FALSE, times=1)
+train_datadff <- dff[trainIndexdff, ]
+test_datadff <- dff[-trainIndexdff, ]
+```
+
+### Multiple Linear Regression using Validation Set Approach
+
+```{r MLR1, echo=TRUE}
+fullmodel <- lm(log_charges ~ ., train_datadff) 
+summary(fullmodel) 
+# All variables are statistically significant, but the model is overfitted
+
+# Prediction and MSE calculation
+pred1 <- predict(fullmodel, newdata=test_datadff)
+actual_og1 <- exp(test_datadff$log_charges)
+mse_full <- mean((actual_og1 - exp(pred1))^2)
+
+# RMSE of the full model
+rmse_full <- sqrt(mse_full)
+cat("RMSE of the full model:", rmse_full, "\n")
+```
+
+### Multiple Linear Regression using 10-fold Cross-validation
+
+```{r MLR-10foldcv, echo = TRUE}
+# Baseline model for comparison
+set.seed(123)
+ctrl <- trainControl(method = "cv", number = 10)
+mlr_model <- train(charges ~ ., 
+                   data = df, 
+                   method = "lm", 
+                   trControl = ctrl)
+summary(mlr_model)
+mlr_rmse_cv <- mlr_model$results$RMSE # RMSE of the model
+cat("RMSE of the model using 10-fold cross-validation:", mlr_rmse_cv, "\n")
+
+```
+
+#### **Interpretation of Multiple Linear Regression**
+
+The model explains 75% of the variance in the data, with `smoker` being
+the **most significant predictor**.
+
+The model indicates:
+
+-   Smokers are predicted to have `charges` that are \$23,836 higher
+    than non-smokers, cet.par.
+-   An additional year of `age` is associated with a \$257 increase in
+    `charges` on average, cet.par.
+-   A one unit increase in `bmi` increases `charges` by \$337 on
+    average, cet.par.
+
+### Split Data into Training and Testing Sets for Non-Linear Models
+
+```{r data-splitnonlinear, echo =TRUE}
+set.seed(123)
+trainIndex <- createDataPartition(df$charges, p=0.8, list=FALSE, times=1)
+train_data <- df[trainIndex, ]
+test_data <- df[-trainIndex, ]
+```
+
+### Consideration of Interaction Terms
+
+```{r interactions, echo =TRUE}
+# Fit a model with interaction terms
+interaction_model <- lm(log_charges ~ sex * smoker + age * bmi + age * smoker + bmi * smoker + region * smoker + bmi * region, data = train_datadff)
+summary(interaction_model) 
+# Significant: 
+# smoker: age 
+# smoker: bmi
+
+# bmi:regionsoutheast is significant (.02) but other regions are not and EDA also suggests
+# that we should ignore this interaction
+```
+
+### Visualise Key Interactions Non-linearly
+
+```{r nonlinear-visuals, echo=FALSE}
+# Locally weighted regression to visualise interactions 
+# Visualize smoker: bmi 
+ggplot(df, aes(bmi, charges, color = smoker)) + 
+  geom_point(alpha = 0.5) + 
+  geom_smooth(method = "loess") +  
+  labs(title = "Medical Charges by BMI and Smoking Status")
+# Low bmi may have lower medical charges 
+
+# Visualize smoker: age
+ggplot(df, aes(age, charges, color = smoker)) + 
+  geom_point(alpha = 0.5) + 
+  geom_smooth(method = "loess") +  
+  labs(title = "Medical Charges by Age and Smoking Status")
+
+```
+
+### Multiple Linear Regression with Interaction Terms
+
+```{r MLR-interact, echo = TRUE}
+set.seed(123)
+ctrl <- trainControl(method = "cv", number = 10)  
+
+# Fit a multiple linear regression model with interaction terms
+mlr_modelIT <- train(charges ~ .+ smoker:age + smoker:bmi, 
+                   data = df, 
+                   method = "lm", 
+                   trControl = ctrl)
+# RMSE of the model
+mlr_rmse_cvIT <- mlr_modelIT$results$RMSE 
+cat("RMSE of the model with interaction terms using 10-fold cross-validation:", mlr_rmse_cvIT, "\n")
+```
+
+### Best Subset Selection (BREG) using Validation Set Approach
+
+```{r BREG, echo=FALSE}
+regfit.full <- regsubsets(charges ~ . + smoker:age + smoker:bmi , train_data, nvmax = 14)
+reg.summary <- summary(regfit.full)
+
+par(mfrow = c(2, 2))
+
+plot(reg.summary$rss, xlab = "Number of Variables",
+       ylab = "RSS", type = "l")
+
+plot(reg.summary$adjr2, xlab = "Number of Variables",
+       ylab = "Adjusted RSq", type = "l")
+
+cat("Best number of variables according to adjusted R-squared:", which.max(reg.summary$adjr2), "\n")
+    
+plot(reg.summary$adjr2, xlab = "Number of Variables",
+       ylab = "Adjusted RSq", type = "l")
+
+points(11, reg.summary$adjr2[11], col = "red", cex = 2,
+         pch = 20)
+
+plot(reg.summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+
+cat("Best number of variables according to Cp:", which.min(reg.summary$cp), "\n")
+
+points(10, reg.summary$cp[10], col = "red", cex = 2,
+         pch = 20)
+
+par(mfrow = c(1, 1))
+cat("Best number of variables according to BIC:", which.min(reg.summary$bic), "\n")
+
+plot(reg.summary$bic, xlab = "Number of Variables",
+       ylab = "BIC", type = "l")
+
+points(3, reg.summary$bic[3], col = "red", cex = 2,
+         pch = 20)
+
+# Since BIC places a heavier penalty on models with a number of variables, BIC will be used to select the best model 
+```
+
+```{r BREG_bic, echo=TRUE, eval=TRUE}
+# Coefficients of the best model according to BIC
+coef(regfit.full, 3) 
+```
+
+```{r BREG_bic_pred, echo=FALSE}
+
+# Create a function to predict using the best subset model
+predict.regsubsets <- function(object, newdata, id, ...) {
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+}
+
+# Calculate RMSE
+best_model_index <- which.min(reg.summary$bic)
+preds <- predict.regsubsets(regfit.full, test_data, id = best_model_index)
+actuals <- test_data$charges
+rmse_bestsub_bic <- sqrt(mean((actuals - preds)^2))  
+cat("RMSE of the best subset model using BIC:", rmse_bestsub_bic, "\n")
+```
+
+### Best Subset Selection (BREG) using 10-fold Cross-validation
+
+```{r BREG-10foldcv}
+set.seed(1)
+k <- 10
+n <- nrow(df)
+folds <- sample(rep(1:k, length.out = n)) 
+
+cv.errors <- matrix(NA, k, 14)
+
+# Define the predict method for regsubsets
+predict.regsubsets <- function(object, newdata, id, ...) {
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+}
+
+
+# Perform k-fold CV
+for (j in 1:k) {
+  fit <- regsubsets(charges ~ . + smoker:age + smoker:bmi,
+                    data = df[folds != j, ],
+                    nvmax = 14)
+  
+  for (i in 1:14) {
+    pred <- predict.regsubsets(fit, df[folds == j, ], id = i)
+    actual <- df$charges[folds == j]
+    cv.errors[j, i] <- mean((actual - pred)^2)
+  }
+}
+
+
+# Calculate mean CV error and standard deviation
+mean.cv.errors <- apply(cv.errors, 2, mean)
+cv.sd.errors <- apply(cv.errors, 2, sd)
+
+# Plot CV errors
+plot(mean.cv.errors, type = "b", pch = 19, col = "darkblue",
+     xlab = "Number of Predictors", ylab = "Mean CV Error")
+
+# Apply 1-SE rule
+min.error <- min(mean.cv.errors)
+min.index <- which.min(mean.cv.errors)
+threshold <- min.error + cv.sd.errors[min.index]
+best.se.model <- which(mean.cv.errors <= threshold)[1]
+cat("Best model using 1-SE rule:", best.se.model, "\n")
+abline(h = threshold, col = "red", lty = 2)
+points(best.se.model, mean.cv.errors[best.se.model], col = "red", pch = 19, cex = 1.5)
+
+rmse_bestsub_cv <- sqrt(mean.cv.errors[best.se.model])
+cat("RMSE of the best subset model using 1-SE rule:", rmse_bestsub_cv, "\n")
+
+# Coefficients of the best model
+coef(regfit.full, best.se.model)
+```
+
+### LASSO with interaction terms using 10-fold Cross-validation
+
+```{r LASSO-interact, echo=TRUE}
+# Scale the numeric columns of the data using mean and standard deviation
+set.seed(1)
+numeric_columns <- names(df)[sapply(df, is.numeric)]
+means <- colMeans(df[, numeric_columns])
+sds <- apply(df[, numeric_columns], 2, sd)
+
+# Create a data frame for scaled data
+df_scaled <- df
+df_scaled[, numeric_columns] <- sweep(df[, numeric_columns], 2, means, "-")
+df_scaled[, numeric_columns] <- sweep(df_scaled[, numeric_columns], 2, sds, "/")
+
+```
+
+```{r LASSO-interact2, echo=FALSE}
+# Prepare X and y
+X <- model.matrix(charges ~ . + smoker:age + smoker:bmi, df_scaled)[, -1]  # Remove intercept
+y <- df_scaled$charges
+
+# Fit LASSO with cross-validation, choosing the best lambda
+cv_lasso <- cv.glmnet(X, y, alpha = 1, nfolds = 10)
+cv_lasso
+lambda_min <- cv_lasso$lambda.min # As prediction accuracy is the goal min is used instead of 1se
+cat("Optimal lambda using 10-fold cross-validation:", lambda_min, "\n")
+lasso_model <- glmnet(X, y, alpha = 1, lambda = lambda_min)
+
+# Predict and compute RMSE in original units
+lasso_pred <- predict(lasso_model, s = lambda_min, newx = X)
+rmse_scaled <- sqrt(mean((lasso_pred - y)^2))
+rmse_original_units <- rmse_scaled * sd(df$charges)
+
+# Extract coefficients
+lasso_coef <- coef(lasso_model, s = lambda_min)
+coef_vector <- setNames(as.numeric(lasso_coef)[-1], rownames(lasso_coef)[-1])
+nonzero_vars <- names(coef_vector[coef_vector != 0])
+
+# Separate numeric and categorical variables
+numeric_vars <- intersect(nonzero_vars, names(sds))
+categorical_vars <- setdiff(nonzero_vars, numeric_vars)
+
+# Unscale numeric coefficients
+unscaled_numeric_coefs <- coef_vector[numeric_vars] / sds[numeric_vars]
+categorical_coefs <- coef_vector[categorical_vars]
+
+# Adjust intercept
+intercept_adj <- as.numeric(lasso_coef[1]) - sum(means[numeric_vars] * unscaled_numeric_coefs)
+
+# Final sparse matrix of unstandardized coefficients
+all_coef_names <- rownames(lasso_coef)
+all_unstandardized_coefs <- rep(0, length(all_coef_names))
+names(all_unstandardized_coefs) <- all_coef_names
+all_unstandardized_coefs["(Intercept)"] <- intercept_adj
+all_unstandardized_coefs[numeric_vars] <- unscaled_numeric_coefs
+all_unstandardized_coefs[categorical_vars] <- categorical_coefs
+
+unstandardized_coef_sparse <- as(as.matrix(all_unstandardized_coefs), "sparseMatrix")
+colnames(unstandardized_coef_sparse) <- "unstandardized_coef"
+unstandardized_coef_sparse
+
+# Output
+rmse_lasso <- rmse_original_units 
+cat("RMSE of the LASSO model with interaction terms using 10-fold cross-validation:", rmse_lasso, "\n")
+
+```
+
+## Tree based methods
+
+### Decision Tree
+
+```{r decisiontree, warning=FALSE, message=FALSE, echo = FALSE}
+tree_model <- tree(charges ~ ., data = train_data) # Fit a decision tree
+summary(tree_model)
+plot(tree_model) # Plot the tree
+text(tree_model, pretty = 0)
+# Predict on test data
+tree_pred <- predict(tree_model, newdata = test_data)
+# Compute MSE
+tree_mse <- mean((test_data$charges - tree_pred)^2)
+# Compute RMSE
+rmsetree <- sqrt(tree_mse)
+cat("RMSE of the Decision Tree model:", rmsetree, "\n")
+
+set.seed(42)
+cv.tree_model <- cv.tree(tree_model) # prune with cross-validation
+# Lower risk of overfitting and less variance than using lewest cv error
+# -> Apply one standard error rule 
+# Extract deviance and size and calculate standard error
+dev <- cv.tree_model$dev
+size <- cv.tree_model$size
+se <- sd(dev) / sqrt(length(dev)) # approximate se 
+
+# Find minimum deviance and its index
+min_dev <- min(dev)
+min_index <- which.min(dev)
+acceptable <- which(dev <= min_dev + se)
+best_1se_size <- min(size[acceptable])  # Choose the smallest tree among them
+
+# Prune the tree best size
+pruned_tree_1se <- prune.tree(tree_model, best = best_1se_size)
+plot(pruned_tree_1se)
+text(pruned_tree_1se, pretty = 0)
+
+# Predict on test data
+tree_pred_1se <- predict(pruned_tree_1se, newdata = test_data)
+# Compute MSE
+tree_mse_1se <- mean((test_data$charges - tree_pred_1se)^2)
+# Compute RMSE
+rmsetree_1se <- sqrt(tree_mse_1se)
+cat("RMSE of the Pruned Decision Tree model:", rmsetree_1se, "\n")
+
+# Complexity parameter tuning & train on full data
+tree_model_cv <- train(
+  charges ~ ., 
+  data = df,
+  method = "rpart",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneGrid = expand.grid(cp = seq(0.01, 0.1, by = 0.01)),
+  metric = "RMSE"
+)
+
+# Apply 1-SE rule to select cp
+results <- tree_model_cv$results
+best_rmse <- min(results$RMSE)
+rmse_se <- results$RMSESD[which.min(results$RMSE)]
+acceptable <- results %>% filter(RMSE <= best_rmse + rmse_se)
+best_cp_1se <- max(acceptable$cp)
+cat("Selected cp using 1-SE rule:", best_cp_1se, "\n")
+
+
+final_rmse_decisiontree <- tree_model_cv$results %>%
+  filter(cp == best_cp_1se) %>%
+  pull(RMSE)
+cat("Final RMSE of the Decision Tree model using 10-fold cross-validation:", final_rmse_decisiontree, "\n")
+```
+
+### Boosting
+
+Boosting is used as another method for **variable selection** as unlike
+LASSO and best subset selection, it can **model non-linear
+relationships** and capture **interactions well.**
+
+```{r boost}
+boost_model <- gbm(charges ~ ., data = train_data, distribution = "gaussian", 
+                   n.trees = 5000, interaction.depth = 4, shrinkage = 0.01) # depth of the tree = 4
+
+# Predict on test data
+boost_pred <- predict(boost_model, newdata = test_data, n.trees = 5000)
+
+# Compute MSE
+boost_mse <- mean((test_data$charges - boost_pred)^2)
+
+# Compute RMSE
+boost_rmse <- sqrt(boost_mse)
+cat("RMSE of the Boosting model:", boost_rmse, "\n")
+```
+
+### Boosting on 10-fold Cross-validation
+
+```{r boostingcv, fig.width=8, fig.height=5}
+# Cross-validation for Boosting
+set.seed(123)
+boost_cv <- gbm(
+  charges ~ ., 
+  data = df,
+  distribution = "gaussian",
+  n.trees = 1000,
+  interaction.depth = 3,   # tree depth
+  shrinkage = 0.01,        # learning rate
+  cv.folds = 10,           
+  verbose = FALSE
+)
+
+# Calculate RMSE
+best_trees <- gbm.perf(boost_cv, method = "cv")  
+rmsecv.boost <- sqrt(boost_cv$cv.error[best_trees])
+cat("RMSE of the Boosting model using 10-fold cross-validation:", rmsecv.boost, "\n")
+
+# Variable importance 
+invisible(summary(boost_cv))  
+
+# Partial dependence Plots of Smoker and BMI
+plot(boost_cv, i = "smoker", ylab = "Partial Dependence of Charges on Smoker")
+plot(boost_cv, i = "bmi", ylab = "Partial Dependence of Charges on BMI")
+
+```
+
+### Random Forest
+
+```{r q1rf}
+tuneGrid <- expand.grid(.mtry = c(2, 4, 6, 8))
+ctrl <- trainControl(method = "cv", number = 10)
+
+rf_tuned <- train(charges ~ ., data = df,
+                  method = "rf",
+                  tuneGrid = tuneGrid,
+                  trControl = ctrl,
+                  importance = TRUE)
+
+# RMSE of best mtry 
+rf_best_rmse <- rf_tuned$results$RMSE[rf_tuned$results$mtry == rf_tuned$bestTune$mtry]
+cat("RMSE of the Random Forest model:", rf_best_rmse, "\n")
+
+# Plot variable importance
+importance_rf <- varImp(rf_tuned, scale = TRUE)
+
+plot(importance_rf, main = "Random Forest Variable Importance")
+
+# As mentioned, the smoker variable is the most important in predicting charges
+# Age and bmi are also important predictors which follows from previous analysis e.g. EDA
+```
+
+### Random Forest with Interaction Term
+
+```{r RMSE}
+rf_tuned2 <- train(charges ~ .+ smoker:age + smoker:bmi, data = df,
+                  method = "rf",
+                  tuneGrid = tuneGrid,
+                  trControl = ctrl,
+                  importance = TRUE)
+
+# RMSE of best mtry with interactions 
+rf_2rmse <- rf_tuned2$results$RMSE[rf_tuned2$results$mtry == rf_tuned2$bestTune$mtry]
+cat("RMSE of the Random Forest model with interaction terms:", rf_2rmse, "\n")
+
+
+# Plot variable importance with interactions
+importance_rf2 <- varImp(rf_tuned2, scale = TRUE)
+
+plot(importance_rf2, main = "Random Forest Variable Importance with Interaction")
+```
+
+The importance differs slightly as the interaction terms are treated as
+more important. Age is treated as rather than smoker when the
+interactions are considered explicitly.
+
+### Bayesian Additive Regression Trees (BART) using Validation Set Approach
+
+```{r BART, echo = FALSE, results='hide'}
+# Since the previous tree models have suggested that the optimal tree size is relatively shallow 
+# BART is a good model to try as it is a Bayesian model that averages multiple trees
+
+# BART using training and test set 
+set.seed(123)
+head(df,5)
+x <- df[, 2:7]
+y <- df[, "charges"] 
+
+# Split the data into training and testing sets
+set.seed(123) # set seed for reproducibility 
+trainIndexdf <- createDataPartition(df$charges, p=0.8, list=FALSE, times=1)
+train_datadf <- df[trainIndexdf, ]
+test_datadf <- df[-trainIndexdf, ]
+
+bartfit <- gbart(x[trainIndexdf, ], y[trainIndexdf], x.test = x[-trainIndexdf, ])
+yhat.bart <- bartfit$yhat.test.mean
+
+cat("Test MSE:", mean((y[-trainIndexdf] - yhat.bart)^2), "\n")
+cat("Train MSE:", mean((y[trainIndexdf] - bartfit$yhat.train.mean)^2), "\n")
+
+# Variable importance plot 
+par(mfrow = c(1, 1)) 
+var_importance <- colMeans(bartfit$varcount[, !colnames(bartfit$varcount) %in% "charges"])
+barplot(sort(var_importance, decreasing = TRUE), main = "BART Variable Importance",
+        las = 2, 
+        ylab = "Average Number of Times Used in Trees",
+        ylim = c(0, 25),
+        cex.names = 0.8,
+        col = "lightblue")
+```
+
+### Bayesian Additive Regression Trees (BART) using 10-fold Cross-validation
+
+```{r BAR10fold-cv, results = "hide", echo= TRUE}
+set.seed(123)
+k <- 10
+folds <- sample(1:k, nrow(df), replace = TRUE)
+rmse_list <- numeric(k)
+
+for (i in 1:k) {
+  train_idx <- which(folds != i)
+  test_idx <- which(folds == i)
+  
+  bart_cvmodel <- gbart(x[train_idx, ], y[train_idx], 
+                 x.test = x[test_idx, ],
+                 ntree = 50, k = 2)
+  
+  rmse_list[i] <- sqrt(mean((y[test_idx] - bart_cvmodel$yhat.test.mean)^2))
+}
+```
+
+```{r BAR10fold-cv-out}
+mean_rmse_bartcv <- mean(rmse_list)
+
+cat("10-Fold CV RMSE (gbart):", mean_rmse_bartcv)
+
+ord <- order(bart_cvmodel$varcount.mean, decreasing = T) 
+```
+
+```{r BART-importance, results= 'hide'}
+# check how many times each variable appeared in the collection of trees.
+bart_cvmodel$varcount.mean[ord]
+```
+
+## Model Comparison
+
+```{r modelcompareRMSE, echo = FALSE}
+model_performance <- data.frame(
+  Model = c("MLR_log(y)", "MLR_Inter", "BREG_Inter","LASSO_Inter", "Decision_tree" ,"Boosting", "Random_forest", "BART"),
+  RMSE = c(mlr_rmse_cv, mlr_rmse_cvIT, rmse_bestsub_cv, rmse_lasso, final_rmse_decisiontree, rmsecv.boost, rf_best_rmse, mean_rmse_bartcv)
+)
+
+best_model <- model_performance[which.min(model_performance$RMSE), "Model"]
+cat("Best Performing Model (RMSE):", best_model, "\n")
+```
+
+```{r modelcompareRMSE_vis, echo=TRUE}
+
+ggplot(model_performance, aes(x = reorder(Model, -RMSE), y = RMSE, fill = (Model == best_model))) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  scale_fill_manual(values = c("gray", "darkorange")) +
+  geom_text(aes(label = round(RMSE, 2)), vjust = -0.5, size = 4, fontface = "bold") +
+  labs(
+    title = "Model Performance Comparison (RMSE)",
+    y = "Mean Squared Error (RMSE)",
+    x = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+## **Discussion: Interpreting Model Performance & Improvements**
+
+After comparing the regression models using **Root Mean Squared Error
+(RMSE)**, we can make several observations about the predictive
+performance of each model for medical insurance charges.
+
+-   `Smoker` is the most important in predicting `charges` when
+    examining **main effects alone**, followed by `age` and `bmi`.
+
+-   When interactions are considered, the models suggest `age` and
+    `smoker:bmi` may be more important than `smoker` alone.
+
+### Which Model Performed Best?
+
+-   The **best-performing model**, with the **lowest RMSE** is
+    highlighted in **orange** in the final plot.
+
+-   **Tree based models** (e.g.Boosting, Random Forest and BART)
+    outperformed linear models, though **linear models with interaction
+    terms** surpassed decision trees and had a lower RMSE than basic
+    linear models. This suggests **non-linear relationships** in the
+    data, making simple linear model inadequate.
+
+-   **BART had the lowest RMSE**, this suggests that there may be more
+    complex relationships in the data such as higher order interactions
+    e.g. between smoker, age and BMI and other variables.
+
+### Key Insights from Model Performance
+
+-   **Multivariate Linear Regression**: Provides a simple **baseline
+    model**, but simple least squares is too flexible, over fits the
+    data and interactions or non-linear trends may not be captured.
+
+-   **Regression with Interaction Terms**: Helps capture **dependencies
+    between predictors**, but increased model complexity, does not
+    always improve accuracy since simple least squares still over fits
+    the data.
+
+-   **Polynomial Regression**: Did not effectively capture **non-linear
+    relationships** and suggested that relationships are not smooth
+    global curves.
+
+-   **Best Subset Regression(BREG) with Interaction terms**:
+
+    -   Using the 1-SE rule for variable selection, the model selected
+        `age` and `smoker:bmi` as the top predictors. Smoking impacts
+        charges significantly varies with BMI (and vice versa). The
+        joint effect explains for more variance than either alone.
+    -   When optimized for cross validation error rather than variable
+        selection, the model achieved a slightly lower RMSE.
+
+-   **LASSO**: Provided marginal improvement over BREG. Weak
+    `lambda_min` penalty resulted in a model too weak to enforce
+    sparsity (many variables retained) and high variance (potential
+    noise). The least important variable was `age:smoker`.
+
+-   **Random Forest**: Achieved strong predictive accuracy, ranking
+    second only to **BART**. It outperforms both decision trees and
+    boosting methods.
+
+------------------------------------------------------------------------
+
+## **Final Summary and Improvements**
+
+**Tree Based Methods had the lowest MSE:**\
+→ Medical Charges depend on complex **non-linear, non-additive
+relationships**.
+
+**Next Steps:**
+
+\- It would have been reasonable to explore **step functions** e.g. for
+`bmi` over 30 as there may be a threshold effect. For instance, smokers
+who have a `bmi` over 30 likely have higher medical charges.\
+- **Improve feature engineering**, remove collinear variables, and
+better model `smoker*bmi`.\
+- **Explore unsupervised methods e.g. cluster analysis** to better
+understand `bmi:smoker`.\
+- **Try advanced models like XGBoost and Hybrid Models** to trade
+interpretability for improved accuracy.
+
+This analysis provides a strong foundation for **medical charges
+forecasting**, but further refinements could lead to even better
+predictive performance.
+
+------------------------------------------------------------------------
+
+### Appendix
+
+##### Statistical Tests with no statistical significance
+
+```{r appendix-stat-tests, echo= TRUE, eval = FALSE}
+
+# T-tests
+t.test(dff$log_charges ~ dff$sex) 
+t.test(dff$age ~ dff$smoker) 
+t.test(dff$age ~ dff$sex) 
+
+# Chi-squared tests
+# Region x smoker 
+with(df, CrossTable(region, smoker, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Close to 0.05, but not statistically significant
+
+# Region x children
+with(df, CrossTable(region, children, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+
+# Sex x region
+with(df, CrossTable(sex, region, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+# Children x sex 
+with(df, CrossTable(sex, children, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+# Children x smoker
+with(df, CrossTable(smoker, children, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, but note there are less than 5 expected counts in some cells
+
+# ANOVA
+# age x children
+aov1 <- aov(age ~ factor(children), data = dff)
+summary(aov1)
+par(mfrow=c(2,2))
+plot(aov1) # check residuals to decide on weight of resulting H0 conclusion  
+# no significant difference in age between the number of children
+
+# age x region
+aov2 <- aov(age ~ factor(region), data = dff)
+summary(aov2)
+par(mfrow=c(2,2))
+plot(aov2)
+# no significant difference in age between the regions
+
+# bmi x children
+aov3 <- aov(bmi ~ factor(children), data = dff)
+summary(aov3)
+par(mfrow=c(2,2))
+plot(aov3)
+# no significant difference in bmi between the number of children
+
+# charges x region 
+aov6 <- aov(log_charges ~ factor(region), data = dff)
+summary(aov6)
+par(mfrow=c(2,2))
+plot(aov6)
+# no significant difference in charges between the different regions 
+```
+
+##### Polynomial Regression
+
+```{r polynomial, echo= TRUE, eval = FALSE}
+# Explore Polynomials
+fit1 <- lm(charges ~ age, data = df)
+fit2 <- lm(charges ~ poly(age, 2), data = df)
+fit3 <- lm(charges ~ poly(age, 3), data = df)
+fit4 <- lm(charges ~ poly(age, 4), data = df)
+
+AIC(fit1, fit2, fit3, fit4) 
+anova(fit1, fit2, fit3, fit4) 
+
+# Complex models hasn't improved the model much, linear model is simpler
+
+fit1 <- lm(charges ~ bmi, data = df)
+fit2 <- lm(charges ~ poly(bmi, 2), data = df)
+fit3 <- lm(charges ~ poly(bmi, 3), data = df)
+fit4 <- lm(charges ~ poly(bmi, 4), data = df)
+
+AIC(fit1, fit2, fit3, fit4)
+anova(fit1, fit2, fit3, fit4)
+# Polynomial does not seem beneficial 
+```
+
+------------------------------------------------------------------------
+
+# **Question 2: Stroke Prediction**
+
+```{r setup2}
+rm(list = ls()) # Clear Workspace
+```
+
+## Load data
+
+```{r setup2a, echo = TRUE}
+df2 <- read.csv("/Users/20lau01/Documents/GitHub/Data Science Modelling/Assessment/stroke_prediction.csv")
+```
+
+## Exploratory Data Analysis
+
+```{r eda_q2, echo=TRUE, eval=FALSE}
+# Explore dataset
+dim(df2) 
+summary(df2)
+glimpse(df2)
+View(df2)
+```
+
+```{r eda_q2a, echo=FALSE}
+# Organise the data
+df2 <- df2[,-1] #remove id 
+# head(df2, 5) # check the first 5 rows
+colnames(df2) <- gsub("_", "", colnames(df2)) # remove the underscores in the column names
+colnames(df2)
+```
+
+```{r eda_q2b, echo=TRUE, eval=FALSE}
+# Understand Missing
+# Age 
+min(df2$age)
+sum(df2$age == 0.08) 
+sum(is.na(df2$age)) # Check for missing values
+
+# BMI
+sum(df2$bmi== "N/A")
+sum(is.na(df2$bmi))
+class(df2$bmi)
+
+# Smoking 
+sum(df2$smokingstatus == "Unknown")
+sum(is.na(df2$smokingstatus)) 
+
+# Check total missing values
+sum(is.na(df2)) 
+```
+
+```{r edaq2c, echo=TRUE}
+df2$age[df2$age == 0.08] <- NA # Replace 0.08 with NA
+df2$bmi[df2$bmi == "N/A"] <- NA # Replace N/A with NA
+df2$smokingstatus[df2$smokingstatus == "Unknown"] <- NA
+
+# Factorise 
+cols <- c("stroke", "gender", "evermarried", "hypertension", "heartdisease", "worktype", "residencetype", "smokingstatus") 
+df2[cols] <- lapply(df2[cols], as.factor)
+
+# Recode binary variables 
+levels(df2$heartdisease) <- c("No", "Yes")
+levels(df2$stroke) <- c("No", "Yes")
+
+# Reorder levels for smoking status
+df2$smokingstatus <- factor(df2$smokingstatus, levels = c("never smoked", "formerly smoked", "smokes"), ordered = TRUE)
+
+# Remove the One "Other" from gender for simplicity for modelling 
+df2 <- df2[df2$gender != "Other",]
+df2$gender <- droplevels(df2$gender)
+df2$gender <- relevel(df2$gender, ref = "Male")  # Reorder level for gender                 
+```
+
+```{r eda_q2-show}
+# Check balances in cateogrical variable 
+with(df2,
+     {
+       print(table(stroke)); # 0 missing values -> SEVERE class imbalance !
+       print(table(evermarried)); # More married than unmarried
+       print(table(hypertension)); # More people without hypertension
+       print(table(heartdisease)); # More people without heart disease
+       print(table(residencetype)); # More people in urban residencetype, but relatively balanced
+       print(table(gender)); # 0 missing values -> More females than male in the dataset
+       print(table(worktype)); # More people in private worktype
+       print(table(smokingstatus)); # 1544 missing values
+     })
+
+```
+
+### Impute Missing
+
+```{r missing}
+par(mfrow=c(1,1))
+invisible(md.pattern(df2, rotate.names = TRUE))
+```
+
+```{r mice, results = "hide", echo = FALSE, eval = TRUE}
+methods(mice) # Check imputation methods
+init <- mice(df2, maxit = 0, print = FALSE)
+methods <- init$method
+methods["bmi"] <- "pmm"               # Continuous
+methods["age"] <- "pmm"               # Continuous
+methods["smokingstatus"] <- "rf" # Categorical-Factor
+
+imputed_data <- mice(df2, m = 5, method = methods, 
+                     seed = 123, print = FALSE) # Impute missing data using methods specified
+
+summary(imputed_data) # Check imputed data
+complete_data <- mice::complete(imputed_data, 1) # Extract only 1st imputed dataset
+
+```
+
+### Descriptive Analysis
+
+#### Univariate Analysis
+
+```{r edauni2}
+# Use TableOne for descriptive stats table
+complete_data$age <- as.numeric(complete_data$age) # Convert age to numeric
+complete_data$bmi <- as.numeric(complete_data$bmi) # Convert bmi to numeric
+complete_data$avgglucoselevel <- as.numeric(complete_data$avgglucoselevel) # Convert avgglucoselevel to numeric
+
+var2 <- c("stroke", "bmi", "age", "avgglucoselevel", "evermarried", "hypertension", "heartdisease", "residencetype", "worktype", "smokingstatus", "gender") # Declare variables
+
+print(CreateTableOne(data = complete_data[, var2]),
+      showAllLevels = TRUE,
+      formatOptions = list(big.mark = ",")) # All levels of the categorical variables are shown along with their frequencies.
+```
+
+```{r dcentraltend, echo= FALSE, results = "hide"}
+# Check dummy variables
+class(complete_data$smokingstatus)
+is.ordered(complete_data$smokingstatus)
+complete_data$smokingstatus <- factor(complete_data$smokingstatus, ordered = FALSE)
+
+contrasts(complete_data$smokingstatus)
+table(complete_data$smokingstatus)
+
+complete_data$age <- as.numeric(complete_data$age)
+complete_data$bmi <- as.numeric(complete_data$bmi)
+complete_data$avgglucoselevel <- as.numeric(complete_data$avgglucoselevel)
+
+# Central tendency of measured variables
+describe(complete_data$age, IQR = TRUE)
+describe(complete_data$bmi, IQR = TRUE)
+describe(complete_data$avgglucoselevel, IQR = TRUE)
+```
+
+```{r edauni2c}
+# Visualise data distributions
+par(mfrow=c(2,3))
+hist(complete_data$age, col=2) # approx normal, slight left skew
+hist(complete_data$bmi, col=3) # approx normal, slight left skew
+hist(complete_data$avgglucoselevel, col=4) # right skewed
+boxplot(complete_data$age, col=2)
+boxplot(complete_data$bmi, col=3) # outliers
+boxplot(complete_data$avgglucoselevel, col=4) # outliers
+
+```
+
+#### Bivariate Analysis
+
+##### Relationship Visualizations
+
+```{r eda-bivariate2, eval=FALSE, echo=TRUE}
+cor_matrix2 <- cor(complete_data[, c("age", "bmi", "avgglucoselevel")])
+corrplot(cor_matrix2, method="color", tl.col="black", tl.srt=45)
+```
+
+```{r eda-bivariate2b, echo=TRUE}
+GGally::ggpairs(complete_data[, c("age", "bmi", "avgglucoselevel")]) # note the violations in assumptions of pearson correlation (variables arent normal)
+
+# grouped boxplots 
+par(mfrow=c(1,3))
+boxplot(complete_data$age ~ complete_data$stroke, col = c("#1f77b4", "#ff7f0e"), main = "Boxplot of Age by Stroke Status")
+boxplot(complete_data$bmi ~ complete_data$stroke, col = c("#1f77b4", "#ff7f0e"), main = "Boxplot of BMI by Stroke Status")
+boxplot(complete_data$avgglucoselevel ~ complete_data$stroke, col = c("#1f77b4", "#ff7f0e"), main = "Boxplot of Avg Glucose Level by Stroke Status")
+```
+
+##### T-tests
+
+```{r t-test2, message=FALSE, warning=FALSE, echo= TRUE}
+t.test(complete_data$age ~ complete_data$stroke) # Reject H0, Statistically significant
+t.test(complete_data$bmi ~ complete_data$stroke) # Reject H0, Statistically significant
+t.test(complete_data$avgglucoselevel ~ complete_data$stroke) # Reject H0, Statistically significant
+```
+
+##### Chi-square Tests
+
+```{r chisqua2, echo= TRUE, eval = FALSE}
+# Stroke x ever married
+with(complete_data, CrossTable(evermarried, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+# Association between stroke and ever married
+
+# Stroke x Hypertension
+with(complete_data, CrossTable(hypertension, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant 
+# Association between stroke and hypertension
+
+# Stroke x heart disease
+with(complete_data, CrossTable(heartdisease, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant 
+# Association between stroke and heart disease
+
+# Stroke associated with work type
+with(complete_data, CrossTable(worktype, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant 
+# Association between stroke and work type
+# Expected value for never worked and has stroke is under 5, chi square of independence assumption IS VIOLATED
+
+# Stroke associated with smoking status?
+with(complete_data, CrossTable(smokingstatus, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+# Association between stroke and smoking status
+```
+
+##### Multi-collinearity Checks
+
+```{r multicollin2}
+# Grouped scatter plots 
+# Scatter plot between age and avgglucoselevel 
+ggplot(complete_data, aes(x = age, y = avgglucoselevel)) +
+  geom_point(aes(color = stroke), alpha = 0.7) +
+  facet_wrap(~ stroke) + # grouped by stroke
+  scale_color_manual(values = c("#1f77b4","#ff7f0e")) +
+  labs(title = "Scatterplot of Age vs Avg Glucose Level by Stroke Status") +
+  theme_minimal()
+# Those who have stroke have are older in age and typically fall into 2 clusters of average glucose levels 
+
+# Scatter plot between bmi and avgglucoselevel
+ggplot(complete_data, aes(x = bmi, y = avgglucoselevel)) +
+  facet_wrap(~ stroke) +  # grouped by stroke
+  geom_point(aes(color = stroke), alpha = 0.7) +
+  scale_color_manual(values = c("#1f77b4","#ff7f0e")) +
+  labs(title = "Scatterplot of BMI vs Avg Glucose Level by Stroke Status") +
+  theme_minimal()
+
+# Those who have stroke clusters around a bmi of 25 and a glucose level of 60-125 and 175 and 250
+
+# Scatter plot between age and bmi
+ggplot(complete_data, aes(x = age, y = bmi)) +
+  facet_wrap(~ stroke) +  # grouped by stroke.   
+  geom_point(aes(color = stroke), alpha = 0.7) +
+  scale_color_manual(values = c("#1f77b4","#ff7f0e")) +
+  labs(title = "Scatterplot of Age vs BMI by Stroke Status") +
+  theme_minimal()
+```
+
+```{r multico_ttest, echo = TRUE, eval = FALSE}
+# T test
+t.test(complete_data$age ~ complete_data$gender, var.equal = TRUE) # p = 0.05, Reject H0- statistically significant but age: gender may be useless in models 
+t.test(complete_data$age ~ complete_data$hypertension, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$age ~ complete_data$heartdisease, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$age ~ complete_data$evermarried, var.equal = TRUE) # Reject H0, Statistically significant
+
+t.test(complete_data$bmi ~ complete_data$hypertension, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$bmi ~ complete_data$heartdisease, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$bmi ~ complete_data$evermarried, var.equal = TRUE) # Reject H0, Statistically significant
+
+t.test(complete_data$avgglucoselevel ~ complete_data$gender, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$avgglucoselevel ~ complete_data$hypertension, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$avgglucoselevel ~ complete_data$heartdisease, var.equal = TRUE) # Reject H0, Statistically significant
+t.test(complete_data$avgglucoselevel ~ complete_data$evermarried, var.equal = TRUE) # Reject H0, Statistically significant
+```
+
+```{r multicol_chis2, message=FALSE, warning=FALSE, echo = TRUE, eval= FALSE}
+# Chi-square tests 
+with(complete_data, CrossTable(worktype, gender, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(evermarried, hypertension, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(hypertension, heartdisease, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant-> verifies what we suspected from ggpairs 
+
+with(complete_data, CrossTable(smokingstatus, heartdisease, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(hypertension, worktype, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant -> less than 5 on expected values 
+
+with(complete_data, CrossTable(worktype, evermarried, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(residencetype, smokingstatus, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(heartdisease, worktype, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(evermarried, heartdisease, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(heartdisease, gender, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(smokingstatus, gender, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(worktype, smokingstatus, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+with(complete_data, CrossTable(gender, evermarried, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Reject H0, Statistically significant
+
+```
+
+## **Discussion: Key Insights from Exploratory Data Analysis**
+
+Exploratory analysis of the Stroke data set revealed several important
+patterns and potential data quality issues:
+
+#### 1. Data Quality Issues
+
+-   The data set does not contain explicit missing values, but `BMI` has
+    missing data and the "Unknown" level in `smokingstatus` is treated
+    as missing.
+-   These zero values are treated as missing and replaced using
+    **imputation methods**. As `BMI` and `Age` are numerical variables,
+    predictive mean matching imputation is used as it is a common method
+    that is robust for numerical variables. Random Forest imputation for
+    `smokingstatus` is used as the Stroke data set contains a mix of
+    categorical and numerical variables and prioritizes accuracy and
+    accommodates for more complex relationships .
+-   For `gender`, to ensure consistent levels, `Other` was removed as
+    there is only one observation.
+
+#### 2. Class Imbalance & Data Distribution
+
+-   The data set contains more non-stroke cases (`stroke = 0`) than
+    stroke cases (`stroke = 1`), which can impact model performance.
+
+-   Histograms indicate extreme skewness in `avgglucoselevel` and `BMI`,
+    which may need to be **log transformed** as model performance can
+    suffer.
+
+#### 3. Data Pre-processing Needs
+
+-   Scaling numeric predictors `age`, `avgglucoselevel`, and `BMI` for
+    LDA/QDA or regularized logistic regression would improve model
+    performance
+
+#### 4. Bivariate analysis
+
+-   Those who have `stroke` have are typically older in `age` and fall
+    into generally two clusters of `avgglucoselevel`
+
+-   The average `bmi` of those who have `stroke` is 30 as opposed to 28
+    who do not have `stroke`, whereas the average `age` of those who
+    have `stroke` is 67 as opposed to 41 who do not have. The
+    `avgglucoselevel` of those who have `stroke` is 132 as opposed to
+    104 who do not.
+
+-   Chi-squared test indicated there is no statistically significant
+    association between `stroke` with `gender` or `residencetype`, but
+    there is a statistically significant association between `stroke`
+    and `evermarried`, `hypertension`, `heartdisease`, `worktype`, and
+    `smokingstatus`.
+
+-   Grouped scatter plots and multi-collinearity statistical tests
+    indicate that various interaction terms will need to be considered
+    when modelling as basic logistic regression models would suffer from
+    high multicollinearity. The following interactions require further
+    analysis as to their significance:
+
+    -   `age:hypertension`, `age:heartdisease`, `age:evermarried`,
+        `age:averageglucoselevel`
+
+    -   `bmi:hypertension`, `bmi:evermarried`, `bmi:heartdisease`
+
+    -   `avgglucoselevel:hypertension`, `avgglucoselevel:heartdisease`,
+        `avgglucoselevel:evermarried`
+
+    -   `worktype:evermarried`, `worktype:heartdisease`,
+        `worktype:hypertension`, `worktype:smokingstatus`
+
+    -   `smokingstatus:evermarried`, `smokingstatus:heartdisease`
+
+    -   `hypertension:evermarried`, `hypertension:heartdisease`
+
+------------------------------------------------------------------------
+
+## Machine Learning Models for Stroke Prediction
+
+This section applies **Logistic Regression**, **Linear Discriminant
+Analysis(LDA)** , **Quadratic Discriminant Analysis(QDA)** and **Random
+Forest** to predict whether a patient has `stroke`.
+
+### Logistic Regression to test significance of interactions
+
+```{r logistic_interact2, echo= TRUE, eval = FALSE}
+# For plausible interactions, test individually:
+# Note the following are those that are significant, for interactions that have been tested and were not significant- please see the appendix 
+
+fit_int2 <- glm(stroke ~ age*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int2)
+# statistically significant
+
+fit_int5 <- glm(stroke ~ bmi*hypertension, data=complete_data, family = "binomial")
+summary(fit_int5)
+# statistically significant
+
+fit_int7 <- glm(stroke ~ bmi*evermarried, data=complete_data, family = "binomial")
+summary(fit_int7)
+# statistically significant, interaction more significant than bmi main effect
+
+fit_int8 <- glm(stroke ~ avgglucoselevel*hypertension, data=complete_data, family = "binomial")
+summary(fit_int8)
+# statistically significant
+
+fit_int11 <- glm(stroke ~ worktype*evermarried, data=complete_data, family = "binomial")
+summary(fit_int11)
+# statistically significant for worktypePrivate:evermarriedYes  (but not for others)
+
+fit_int16 <- glm(stroke ~ smokingstatus*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int16)
+# statistically significant (threshold of 0.05)
+
+fit_int17 <- glm(stroke ~ hypertension*evermarried, data=complete_data, family = "binomial")
+summary(fit_int17)
+# statistically significant
+
+fit_int18 <- glm(stroke ~ hypertension*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int18)
+# statistically significant
+```
+
+#### Discussion: Key Insights from Logistic Regression
+
+-   The following two-way interactions were statistically significant
+    and could be given further consideration:
+    -   `age:heartdisease`, `bmi:hypertension`,`bmi:evermarried`
+    -   `avgglucoselevel:hypertension`, `smokingstatus:heartdisease`
+    -   `hypertension:evermarried`, `hypertension:heartdisease`
+
+### Stepwise Logistic Regression with Interaction Terms
+
+```{r glmstepAIC}
+
+complete_data <- na.omit(complete_data)
+set.seed(123)
+
+log_model <- glm(stroke ~ age + hypertension + heartdisease + avgglucoselevel + 
+smokingstatus + evermarried + bmi +
+  age:heartdisease + bmi:hypertension + bmi:evermarried + 
+  avgglucoselevel:hypertension + smokingstatus:heartdisease +
+  hypertension:evermarried + hypertension:heartdisease, 
+data = complete_data, 
+family = "binomial")
+
+# Stepwise selection
+log2_model <- step(log_model, direction = "both", trace = 0)
+summary(log2_model)
+
+# Check for multicollinearity
+vif(log2_model) # SEVERE as expected (from EDA)
+
+```
+
+#### **Discussion: Key Insights from Stepwise Logistic Regression**
+
+-   Stepwise logistic regression selected the following as significant
+    predictors:
+    -   `age`, `hypertension`, `heartdisease`, `avgglucoselevel`,
+        `smokingstatus`, `evermarried`, and `bmi`.
+
+    -   Interaction terms `age:heartdisease`,
+        `smokingstatus:heartdisease`, and `hypertension:evermarried`
+        were also selected
+
+    -   Interactions that were not statistically significant were
+        omitted.
+
+#### Validate Stepwise Logistic Regression with 10-fold Cross Validation
+
+```{r glmAIC}
+set.seed(123)
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,       
+  summaryFunction = twoClassSummary,
+  savePredictions = "final" 
+)
+
+log_model_cv <- train(
+  stroke ~ age + hypertension + heartdisease + avgglucoselevel + 
+    smokingstatus + evermarried +
+    age:heartdisease + smokingstatus:heartdisease +
+    hypertension:evermarried, 
+  data = complete_data, 
+  method = "glm",         # Logistic Regression
+  family = "binomial",    # For binary logistic regression
+  metric = "ROC",         # Optimize for ROC/AUC
+  trControl = ctrl        # Apply 10-fold cross-validation
+)
+
+
+coef(log_model_cv$finalModel)
+```
+
+#### Interpretation of the validated Stepwise Logistic Regression (Hybrid)
+
+-   A one year increase in `age`, increases the log odds of having a
+    `stroke` by 0.07132, *ceteris paribus*.
+
+-   For one mg/dl increase in `avgglucoselevel`, the log odds of having
+    a `stroke` increase by 0.00425, *ceteris paribus*.
+
+-   For those with `hypertension`, the log odds of having a `stroke` is
+    1.34583 times higher than those without hypertension, *ceteris
+    paribus*.
+
+-   For those with `heartdisease`, the log odds of having a `stroke` is
+    2.08845 times higher than those without heart disease, *ceteris
+    paribus*.
+
+-   For those who formerly smoked, the log odds of having a `stroke` is
+    0.12441 times higher than those who never smoked, *ceteris paribus*.
+
+-   For those who smoke, the log odds of having a `stroke` is 0.10365
+    times higher than those who never smoked, *ceteris paribus*.
+
+-   For those who have `evermarried`, the log odds of having a `stroke`
+    is 0.07084 times higher than those who never been married, *ceteris
+    paribus*.
+
+#### Predictions and Model Evaluation
+
+```{r glmAIC-predict}
+cv_roc_log <- roc(
+  response = log_model_cv$pred$obs, 
+  predictor = log_model_cv$pred$Yes,  
+  levels = c("No", "Yes")          # Make sure this match levels(complete_data$stroke)
+)
+
+# Plot Area under the curve (AUC) with cross validated predictions
+auc(cv_roc_log) 
+par(mfrow=c(1,1))
+plot(cv_roc_log, col = "red", main = "ROC Curve for Logistic Regression")
+text(
+  x = 0.4, 
+  y = 0.4, 
+  labels = paste("CV AUC =", round(auc(cv_roc_log), 3)), 
+  col = "red"
+)
+
+```
+
+### LASSO Regression
+
+```{r lasso2}
+# Scale numerical variables 
+set.seed(1)
+numeric_columns <- names(complete_data)[sapply(complete_data, is.numeric)]
+
+# Scale numeric columns
+means <- colMeans(complete_data[, numeric_columns])
+sds <- apply(complete_data[, numeric_columns], 2, sd)
+df_scaled <- complete_data
+df_scaled[, numeric_columns] <- sweep(complete_data[, numeric_columns], 2, means, "-")
+df_scaled[, numeric_columns] <- sweep(df_scaled[, numeric_columns], 2, sds, "/")
+
+# Prepare model matrix
+X <- model.matrix(stroke ~ .
+                  + age:heartdisease + 
+                    bmi:hypertension + 
+                    bmi:evermarried + 
+                    avgglucoselevel:hypertension + 
+                    smokingstatus:heartdisease + 
+                    hypertension:evermarried + 
+                    hypertension:heartdisease
+                    , df_scaled)[, -1]
+y <- ifelse(df_scaled$stroke == "Yes", 1, 0)
+
+# Fit LASSO model 
+cv_lasso <- cv.glmnet(X, y, alpha = 1, family = "binomial", nfolds = 10)
+lambda_min <- cv_lasso$lambda.min
+cat("Best lamda (smallest cv-error):", lambda_min, "\n")
+lasso_model <- glmnet(X, y, alpha = 1, family = "binomial", lambda = lambda_min)
+
+lasso_coef <- coef(lasso_model, s = lambda_min)
+coef_vector <- setNames(as.numeric(lasso_coef)[-1], rownames(lasso_coef)[-1])
+nonzero_vars <- names(coef_vector[coef_vector != 0])
+
+# Dont scale the interaction terms
+numeric_vars <- intersect(nonzero_vars, names(sds))
+categorical_vars <- setdiff(nonzero_vars, c(numeric_vars, 
+                                            grep(":", nonzero_vars, value = TRUE)))
+interaction_vars <- grep(":", nonzero_vars, value = TRUE)
+
+# Unscale coefficients 
+unscaled_numeric_coefs <- coef_vector[numeric_vars] / sds[numeric_vars]
+categorical_coefs <- coef_vector[categorical_vars]
+interaction_coefs <- coef_vector[interaction_vars]
+
+# Rescale interaction terms where one part is numeric
+rescaled_interactions <- sapply(names(interaction_coefs), function(term) {
+  vars <- strsplit(term, ":")[[1]]
+  if (vars[1] %in% names(sds) && !(vars[2] %in% names(sds))) {
+    return(interaction_coefs[term] / sds[vars[1]])
+  } else if (vars[2] %in% names(sds) && !(vars[1] %in% names(sds))) {
+    return(interaction_coefs[term] / sds[vars[2]])
+  } else if (all(vars %in% names(sds))) {
+    return(interaction_coefs[term] / (sds[vars[1]] * sds[vars[2]]))
+  } else {
+    return(interaction_coefs[term])  # Both categorical
+  }
+})
+
+
+# Adjust intercept
+intercept_adj <- as.numeric(lasso_coef[1]) - sum(means[numeric_vars] * unscaled_numeric_coefs)
+
+# Initialize all coefficients
+all_coef_names <- rownames(lasso_coef)
+all_unstandardized_coefs <- rep(0, length(all_coef_names))
+names(all_unstandardized_coefs) <- all_coef_names
+
+# Assign final coefficients
+all_unstandardized_coefs["(Intercept)"] <- intercept_adj
+all_unstandardized_coefs[numeric_vars] <- unscaled_numeric_coefs
+all_unstandardized_coefs[categorical_vars] <- categorical_coefs
+all_unstandardized_coefs[interaction_vars] <- rescaled_interactions
+
+# Format as sparse matrix
+unstandardized_coef_sparse <- as(as.matrix(all_unstandardized_coefs), "sparseMatrix")
+colnames(unstandardized_coef_sparse) <- "unstandardized_coef"
+
+# Final output
+unstandardized_coef_sparse
+
+# For the interaction terms only heartdisease:smokingstatus was retained
+```
+
+#### Interpretation of the LASSO Regression with Interactions
+
+-   For a one year increase in `age`, the log odds of having a `stroke`
+    increases by 0.064, *ceteris paribus*.
+
+-   For a one mg/dl increase in `avgglucoselevel`, the log odds of
+    having a `stroke` increase by 0.00357, *ceteris paribus*.
+
+-   For those with `hypertension`, the log odds of having a `stroke` is
+    0.545 units higher compared to those without hypertension, *ceteris
+    paribus*.
+
+-   For those with `heartdisease`, the log odds of having a `stroke` is
+    0.195 times higher compared to those without heart disease, *ceteris
+    paribus*.
+
+-   For those who have `heartdisease` and `formerly smoked`, the log
+    odds of having `stroke` is 0.200 units higher compared to if only
+    the individual effects of `heartdisease` and `never smoked` were
+    added alone, *ceteris paribus*.
+
+-   For those who have `heartdisease` and smokes, the additional effect
+    on the log odds of having `stroke` is 0.668 units higher than would
+    be than only adding the individual effects of `heart disease` and
+    `neversmoked` alone, *ceteris paribus*.
+
+-   For individuals with a `worktype` of `Self-employed`, the log odds
+    of having a `stroke` is -0.195 lower compared to those with a
+    `worktype` of 'Children', *ceteris paribus*.
+
+-   For individuals with a 'worktype' of `Private`, the log odds of
+    having a `stroke` is 0.051 units higher than would be only adding
+    the individual effects of a `worktype` of 'Children', *ceteris
+    paribus*.
+
+#### Predictions and Model Evaluation
+
+```{r lasso-predict2, message=FALSE, warning=FALSE}
+# AUC 
+lasso_prob <- predict(lasso_model, s = lambda_min, newx = X, type = "response")
+auc_val <- auc(roc(y, lasso_prob))
+auc_val
+
+# Plot ROC curve with AUC value
+cv_roc_lasso <- roc(y, lasso_prob, plot = TRUE, 
+                     print.auc = TRUE, 
+                     main = "ROC Curve for LASSO Model")
+
+# Slightly higher AUC, but not that big of a difference from logistic regression
+```
+
+### Linear Discriminant Analaysis (LDA)
+
+```{r lda}
+# Fit LDA model
+# Modified trainControl to save predictions
+
+# define the formula for the models
+formula <- stroke ~ age + hypertension + heartdisease + avgglucoselevel + 
+  smokingstatus + evermarried + bmi +
+  age:heartdisease + bmi:hypertension + bmi:evermarried + 
+  avgglucoselevel:hypertension + smokingstatus:heartdisease +
+  hypertension:evermarried + hypertension:heartdisease
+
+
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,       
+  summaryFunction = twoClassSummary,
+  savePredictions = "final" 
+)
+
+lda_model <- train(formula,
+                    data = df_scaled,
+                    method = "lda",       
+                    metric = "ROC",        
+                    trControl = ctrl)
+
+lda_model
+```
+
+#### Predictions and Model Evaluation
+
+```{r lda-predict}
+cv_roc_lda <- roc(
+  response = lda_model$pred$obs, 
+  predictor = lda_model$pred$Yes,  # Use "Yes" or the appropriate level name
+  levels = c("No", "Yes")          # Must match your factor levels
+)
+
+plot(cv_roc_lda, col = "blue", main = "ROC Curve for LDA", print.auc = TRUE)
+
+# NOTE: LDA’s equal-covariance assumption is violated, we know from EDA grouped scatterplots
+# existing outliers will also distort class means and covariances 
+
+# Alternatively-> The formal test for the equality of covariance matrices is Box's M test.
+# (Which is not necessary but another proof that the assumption is violated) 
+# if (!require(biotools)) install.packages("biotools", dependencies=TRUE)
+# library(biotools)
+# boxM(complete_data[, c("age", "bmi", "avgglucoselevel")], complete_data$stroke)
+```
+
+### Quadratic Discriminant Analysis (QDA)
+
+```{r qda}
+qda_model_cv <- train(formula, 
+  data = complete_data,
+  method = "qda",        # Quadratic Discriminant Analysis
+  metric = "ROC",        # Optimize for AUC-ROC
+  trControl = ctrl       # Use the same 10-fold CV settings
+)
+
+qda_model_cv
+
+cv_roc_qda <- roc(response = qda_model_cv$pred$obs, 
+                  predictor = qda_model_cv$pred$Yes,
+                  levels = c("No", "Yes"))  # Use "Yes" or the appropriate level name
+
+cat("QDA AUC:", auc(cv_roc_qda), "\n")
+```
+
+### Random Forest
+
+#### Optimal mtry Tuning via Out-Of-Bag(OOB) Error
+
+```{r rfOOB, echo = TRUE}
+oob_results <- sapply(c(2, 3, 4, 5), function(m) {
+  model <- randomForest(
+    formula,
+    data = complete_data,
+    mtry = m,
+    strata = complete_data$stroke,    # Balance class splits
+    ntree = 500
+  )
+  return(mean(model$err.rate[, "OOB"]))  # Average OOB error
+})
+
+best_mtry <- c(2, 3, 4, 5)[which.min(oob_results)]
+```
+
+#### Fit Random Forest model with optimal feature splitting (mtry)
+
+```{r rf-fit-OOB, echo = TRUE}
+set.seed(123)
+rf_model <- randomForest(
+  formula,
+  data = complete_data,
+  mtry = best_mtry,  # Optimal mtry from earlier
+  ntree = 1000,      # Sufficiently large to observe stabilization
+  strata = complete_data$stroke,  # For class imbalance
+  sampsize = rep(min(table(complete_data$stroke)), 2),  # Balanced samples
+  importance = TRUE
+)
+
+# When the OOB error stabilizes, it indicates that the model has learned the data well and is not overfitting
+
+# The below plot shows the OOB error for the "Yes" class
+oob_yes <- rf_model$err.rate[, "Yes"]
+plot(oob_yes, type = "l", col = "red", ylab = "OOB Error (Yes)")
+abline(h = min(oob_yes), col = "blue", lty = 2)  # Add a horizontal line for the minimum OOB error
+cat("Minimum OOB error:", min(oob_yes), "\n")
+
+
+rf_model <- train(
+  formula, 
+  data = complete_data, 
+  method = "rf", 
+  trControl = ctrl, 
+  metric = "ROC",
+  tuneGrid = data.frame(mtry = best_mtry), 
+  ntree = 200  # Number of trees
+)
+
+rf_model
+cv_roc_rf <- roc(
+  response = rf_model$pred$obs, 
+  predictor = rf_model$pred$Yes,  # Use "Yes" or the appropriate level name
+  levels = c("No", "Yes")          # Must match your factor levels
+)
+
+final_rf <- rf_model$finalModel
+
+# Plot variable importance
+varImpPlot(final_rf)
+```
+
+## Model Performance Comparison
+
+### ROC Curve and Area under the Curve(AUC) Comparison
+
+```{r ROC-AUC, echo=TRUE}
+
+par(mfrow=c(1,1))
+plot(cv_roc_log, col="red", main="ROC Curve Comparison")
+lines(cv_roc_lasso, col="orange")
+lines(cv_roc_lda, col="blue")
+lines(cv_roc_qda, col="green")
+lines(cv_roc_rf, col="purple")
+legend("bottomright", legend=c("Logistic", "LASSO", "LDA", "QDA", "Random Forest"), col=c("red", "blue", "green", "purple"), lwd=2)
+
+auc_values <- c(
+  "Fwd_Step_Logit" = auc(cv_roc_log),
+  "LASSO" = auc(cv_roc_lasso),
+  "LDA" = auc(cv_roc_lda),
+  "QDA" = auc(cv_roc_qda),
+  "Random Forest" = auc(cv_roc_rf)
+)
+
+auc_values
+
+# Print model name with the highest AUC
+best_model <- names(which.max(auc_values))
+cat("Best Model(Highest-AUC):", best_model, "\n")
+
+
+# All perform similarly, feature engineering may be needed to improve classification 
+```
+
+## **Discussion: Model Performance & Insights**
+
+### **Which Model Performed Best?**
+
+-   **LASSO had the highest ROC curve (largest AUC)** : Suggests that
+    identifying a small subset of features is beneficial for
+    classification.
+
+    -   A sparse **linear boundary** was enough for classification.
+
+    -   L1 regularization effectively handles multicollinearity and can
+        help **reduce over-fitting** and as it performs feature
+        selection by shrinking some coefficients to zero.
+
+-   **Stepwise Logistic Regression had a similar ROC curve to LASSO**: A
+    simple linear boundary is sufficient for classification, meaning the
+    stroke data is **linearly separable**.
+
+-   **LDA does not perform better than Logistic Regression**: Although
+    the assumption of normally distributed data holds well, but the
+    assumption of homogenity of covariance matrices does not. LDA is not
+    the most suitable classifier.
+
+-   **QDA neither outperforms LDA or Logistic Regression**: Suggests
+    that the relationship between features and stroke **is not
+    non-linear**, and QDA's ability to model **curved decision
+    boundaries** is not advantageous.
+
+-   **Random Forest has the lowest AUC**: Suggests that the model
+    underperforms due to its inability to tackle multi-collinearity. The
+    model is ineffective as it does not penalize redundant features and
+    is sensitivity to noise. However, it is still useful for assessing
+    feature importance.
+
+-   **All models perform similarly**: Feature engineering or additional
+    predictors might be needed to improve classification.
+
+**Key Takeaways**: Although Random forest suggested the most important
+predictors of `stroke` are `age`, `avgglucoselevel` and `bmi`, LASSO
+favors `heartdisease` and `hypertension` predictors. The best model
+depends on AUC, ROC-curve, how the model performs **feature selection**
+and meets underlying assumptions. Handling **class imbalance** can
+improve performance. **Pooling data** across all imputed data sets would
+have provided better generalization and **more robust** standard error
+estimates.
+
+------------------------------------------------------------------------
+
+### Appendix
+
+##### Question 2: Statistical Tests with no statistical significance
+
+###### Relationship Checks (Response x Explanatory)
+
+```{r app-y-x, echo= TRUE, eval = FALSE}
+# Stroke x Gender
+with(complete_data, CrossTable(gender, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically signficiant
+# No association between stroke and gender 
+
+# Stroke x residence type
+with(complete_data, CrossTable(residencetype, stroke, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant 
+# No association between stroke and residence type
+
+```
+
+###### Multicollinearity Checks (Explanatory x Explanatory)
+
+```{r app-ttest, echo= TRUE, eval = FALSE}
+# T-tests
+t.test(complete_data$age ~ complete_data$residencetype, var.equal = TRUE) # p = 0.3, fail to reject H0
+t.test(complete_data$bmi ~ complete_data$gender, var.equal = TRUE) # p = 0.1, fail to reject H0
+t.test(complete_data$bmi ~ complete_data$residencetype, var.equal = TRUE) # p = 1, fail to reject H0
+t.test(complete_data$avgglucoselevel ~ complete_data$residencetype, var.equal = TRUE) # Fail to reject H0, p = 0.7
+```
+
+```{r app-chisqu, echo= TRUE, eval = FALSE}
+# Chi-square
+with(complete_data, CrossTable(hypertension, smokingstatus, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(gender, residencetype, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(residencetype, evermarried, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(gender, hypertension, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(residencetype, hypertension, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(residencetype, worktype, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(residencetype, heartdisease, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+
+with(complete_data, CrossTable(smokingstatus, hypertension, prop.chisq = FALSE, prop.c = FALSE, prop.t = FALSE, asresid = TRUE, expected = T, format = c("SPSS")))
+# Fail to reject H0, Not statistically significant
+```
+
+###### Interaction Terms with no statistical significance
+
+```{r app-interac2, echo= TRUE, eval = FALSE}
+fit_int <- glm(stroke ~ age*hypertension, data=complete_data, family = "binomial")
+summary(fit_int)
+# age:hypertension
+
+fit_int3 <- glm(stroke ~ age*evermarried, data=complete_data, family = "binomial")
+summary(fit_int3)
+# age:evermarried
+
+fit_int4 <- glm(stroke ~ age*avgglucoselevel, data=complete_data, family = "binomial")
+summary(fit_int4)
+# age:avgglucoselevel
+
+fit_int6 <- glm(stroke ~ bmi*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int6)
+# bmi:heartdisease
+
+fit_int9 <- glm(stroke ~ avgglucoselevel*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int9)
+# avgglucoselevel:heartdisease
+
+fit_int10 <- glm(stroke ~ avgglucoselevel*evermarried, data=complete_data, family = "binomial")
+summary(fit_int10)
+# avgglucoselevel:evermarried
+
+fit_int12 <- glm(stroke ~ worktype*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int12)
+# worktype:heartdisease
+
+fit_int13 <- glm(stroke ~ worktype*hypertension, data=complete_data, family = "binomial")
+summary(fit_int13)
+# worktype:hypertension
+
+fit_int14 <- glm(stroke ~ worktype*smokingstatus, data=complete_data, family = "binomial")
+summary(fit_int14)
+# worktype:smokingstatus
+
+fit_int15 <- glm(stroke ~ smokingstatus*evermarried, data=complete_data, family = "binomial")
+summary(fit_int15)
+# smokingstatus:evermarried
+```
+
+###### Three way interaction terms all with no statistical significance
+
+```{r appendix-3way, echo= TRUE, eval = FALSE}
+# Consider three way order interactions too -> based off the two way interactions that were tested for significance 
+# e.g.
+# age:heartdisease:hypertension
+# bmi:hypertension:evermarried
+# avgglucoselevel:hypertension:heartdisease
+# bmi:evermarried:hypertension
+# age:heartdisease:smokingstatus 
+
+fit_int19 <- glm(stroke ~ age*heartdisease*hypertension, data=complete_data, family = "binomial")
+summary(fit_int19)
+
+fit_int20<- glm(stroke ~ bmi*hypertension*evermarried, data=complete_data, family = "binomial")
+summary(fit_int20)
+
+fit_int21 <- glm(stroke ~ avgglucoselevel*hypertension*heartdisease, data=complete_data, family = "binomial")
+summary(fit_int21)
+
+fit_int22 <- glm(stroke ~ bmi*evermarried*hypertension, data=complete_data, family = "binomial")
+summary(fit_int22)
+
+fit_int23 <- glm(stroke ~ age*heartdisease*smokingstatus, data=complete_data, family = "binomial")
+summary(fit_int23)
+# All statistically Insignificant
+```
